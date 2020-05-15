@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -436,7 +437,7 @@ func Copy(ctx context.Context, f fs.Fs, dst fs.Object, remote string, src fs.Obj
 							actionTaken = "Copied (replaced existing)"
 							err = dst.Update(ctx, in, wrappedSrc, options...)
 						} else {
-							actionTaken = "Copied (new)"
+							actionTaken = fmt.Sprintf("Copied (new; %s)", reflect.TypeOf(f))
 							dst, err = f.Put(ctx, in, wrappedSrc, options...)
 						}
 						closeErr := in.Close()
@@ -469,11 +470,14 @@ func Copy(ctx context.Context, f fs.Fs, dst fs.Object, remote string, src fs.Obj
 
 	// Verify sizes are the same after transfer
 	if sizeDiffers(src, dst) {
+		errbak := err
 		err = errors.Errorf("corrupted on transfer: sizes differ %d vs %d", src.Size(), dst.Size())
 		fs.Errorf(dst, "%v", err)
 		err = fs.CountError(err)
-		removeFailedCopy(ctx, dst)
-		return newDst, err
+		// removeFailedCopy(ctx, dst)
+		// return newDst, err
+		fs.Debugf(dst, "ehem ... not deleting it. restoring error %v", errbak)
+		err = errbak
 	}
 
 	// Verify hashes are the same after transfer - ignoring blank hashes
@@ -481,11 +485,14 @@ func Copy(ctx context.Context, f fs.Fs, dst fs.Object, remote string, src fs.Obj
 		// checkHashes has logged and counted errors
 		equal, _, srcSum, dstSum, _ := checkHashes(ctx, src, dst, hashType)
 		if !equal {
+			errbak := err
 			err = errors.Errorf("corrupted on transfer: %v hash differ %q vs %q", hashType, srcSum, dstSum)
 			fs.Errorf(dst, "%v", err)
 			err = fs.CountError(err)
-			removeFailedCopy(ctx, dst)
-			return newDst, err
+			// removeFailedCopy(ctx, dst)
+			// return newDst, err
+			fs.Debugf(dst, "ehem ... still not deleting it. restoring error %v", errbak)
+			err = errbak
 		}
 	}
 

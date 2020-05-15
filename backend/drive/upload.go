@@ -12,6 +12,7 @@ package drive
 
 import (
 	"bytes"
+	_ "compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -88,7 +89,9 @@ func (f *Fs) Upload(ctx context.Context, in io.Reader, size int64, contentType, 
 		req.Header.Set("Content-Type", "application/json; charset=UTF-8")
 		req.Header.Set("X-Upload-Content-Type", contentType)
 		if size >= 0 {
-			req.Header.Set("X-Upload-Content-Length", fmt.Sprintf("%v", size))
+			fs.Debugf(f, "making initial request for size %d", size)
+			// req.Header.Set("X-Upload-Content-Length", fmt.Sprintf("%v", size))
+			req.Header.Set("X-Upload-Content-Length", fmt.Sprintf("%v", 174))
 		}
 		res, err = f.client.Do(req)
 		if err == nil {
@@ -116,7 +119,9 @@ func (f *Fs) Upload(ctx context.Context, in io.Reader, size int64, contentType, 
 func (rx *resumableUpload) makeRequest(ctx context.Context, start int64, body io.ReadSeeker, reqSize int64) *http.Request {
 	req, _ := http.NewRequest("POST", rx.URI, body)
 	req = req.WithContext(ctx) // go1.13 can use NewRequestWithContext
+	fs.Debugf(rx.f, "ContentLength is %d\n", req.ContentLength)
 	req.ContentLength = reqSize
+	fs.Debugf(rx.f, "ContentLength is %d\n", req.ContentLength)
 	totalSize := "*"
 	if rx.ContentLength >= 0 {
 		totalSize = strconv.FormatInt(rx.ContentLength, 10)
@@ -126,14 +131,26 @@ func (rx *resumableUpload) makeRequest(ctx context.Context, start int64, body io
 	} else {
 		req.Header.Set("Content-Range", fmt.Sprintf("bytes */%v", totalSize))
 	}
+	req.ContentLength = 0
 	req.Header.Set("Content-Type", rx.MediaType)
 	return req
 }
 
 // Transfer a chunk - caller must call googleapi.CloseBody(res) if err == nil || res != nil
-func (rx *resumableUpload) transferChunk(ctx context.Context, start int64, chunk io.ReadSeeker, chunkSize int64) (int, error) {
+func (rx *resumableUpload) transferChunk(ctx context.Context, start int64, chunk io.ReadSeeker, chunkSize int64, gzipped bool) (int, error) {
 	_, _ = chunk.Seek(0, io.SeekStart)
-	req := rx.makeRequest(ctx, start, chunk, chunkSize)
+	var req *http.Request
+	if gzipped {
+		fs.Debugf(rx.f, "content length is %d\n", rx.ContentLength)
+		rx.ContentLength += 19
+		fs.Debugf(rx.f, "content length is %d\n", rx.ContentLength)
+		req = rx.makeRequest(ctx, start, chunk, chunkSize+19)
+		// req.ContentLength += 19
+		req.Header.Set("Content-Encoding", "gzip")
+	} else {
+		req = rx.makeRequest(ctx, start, chunk, chunkSize)
+	}
+	fs.Debugf(rx.f, "headers are %v\n", req.Header)
 	res, err := rx.f.client.Do(req)
 	if err != nil {
 		return 599, err
@@ -174,6 +191,7 @@ func (rx *resumableUpload) Upload(ctx context.Context) (*drive.File, error) {
 	for finished := false; !finished; {
 		var reqSize int64
 		var chunk io.ReadSeeker
+		var gzipped bool
 		if rx.ContentLength >= 0 {
 			// If size known use repeatable reader for smoother bwlimit
 			if start >= rx.ContentLength {
@@ -183,7 +201,20 @@ func (rx *resumableUpload) Upload(ctx context.Context) (*drive.File, error) {
 			if reqSize >= int64(rx.f.opt.ChunkSize) {
 				reqSize = int64(rx.f.opt.ChunkSize)
 			}
+			// pr, pw := io.Pipe()
+			// gw := gzip.NewWriter(pw)
+			// go io.Copy(gw, rx.Media)
+			//
+			// if err != nil {
+			// 	fs.Debugf(rx.f, "failed to compress %v", err)
 			chunk = readers.NewRepeatableLimitReaderBuffer(rx.Media, buf, reqSize)
+			// 	gzipped = false
+			// } else {
+			fs.Debugf(rx.f, "compressing!")
+			// TODO: add Content-Encoding header
+			// chunk = readers.NewRepeatableLimitReaderBuffer(pr, buf, reqSize)
+			gzipped = true
+			// }
 		} else {
 			// If size unknown read into buffer
 			var n int
@@ -203,7 +234,7 @@ func (rx *resumableUpload) Upload(ctx context.Context) (*drive.File, error) {
 		// Transfer the chunk
 		err = rx.f.pacer.Call(func() (bool, error) {
 			fs.Debugf(rx.remote, "Sending chunk %d length %d", start, reqSize)
-			StatusCode, err = rx.transferChunk(ctx, start, chunk, reqSize)
+			StatusCode, err = rx.transferChunk(ctx, start, chunk, reqSize, gzipped)
 			again, err := rx.f.shouldRetry(err)
 			if StatusCode == statusResumeIncomplete || StatusCode == http.StatusCreated || StatusCode == http.StatusOK {
 				again = false

@@ -2028,7 +2028,8 @@ func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, 
 	}
 
 	var info *drive.File
-	if size >= 0 && size < int64(f.opt.UploadCutoff) {
+	// if size >= 0 && size < int64(f.opt.UploadCutoff) {
+	if false {
 		// Make the API request to upload metadata and file data.
 		// Don't retry, return a retry error instead
 		err = f.pacer.CallNoRetry(func() (bool, error) {

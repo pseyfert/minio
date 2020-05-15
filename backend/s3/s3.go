@@ -32,6 +32,8 @@ import (
 	"sync"
 	"time"
 
+	mygzip "github.com/pseyfert/goplayground/compressionwriter/lib"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/corehandlers"
@@ -2398,7 +2400,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		Metadata:    metadata,
 	}
 	if md5sum != "" {
-		req.ContentMD5 = &md5sum
+		// req.ContentMD5 = &md5sum
 	}
 	if o.fs.opt.ServerSideEncryption != "" {
 		req.ServerSideEncryption = &o.fs.opt.ServerSideEncryption
@@ -2425,6 +2427,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 			return err
 		}
 	} else {
+		fs.Debugf(nil, "not starting multipart")
 
 		// Create the request
 		putObj, _ := o.fs.c.PutObjectRequest(&req)
@@ -2448,7 +2451,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		}
 
 		// create the vanilla http request
-		httpReq, err := http.NewRequest("PUT", url, in)
+		gzipper := mygzip.NewCompressReader(in)
+		httpReq, err := http.NewRequest("PUT", url, &gzipper)
 		if err != nil {
 			return errors.Wrap(err, "s3 upload: new request")
 		}
@@ -2456,7 +2460,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 		// set the headers we signed and the length
 		httpReq.Header = headers
-		httpReq.ContentLength = size
+		httpReq.ContentLength = 78
+		// httpReq.ContentLength = size
 
 		for _, option := range options {
 			switch option.(type) {
@@ -2469,6 +2474,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 				}
 			}
 		}
+		httpReq.Header.Set("Content-Encoding", "gzip")
+		fs.Logf(o, "Headers are %v", httpReq.Header)
 
 		err = o.fs.pacer.CallNoRetry(func() (bool, error) {
 			resp, err := o.fs.srv.Do(httpReq)
