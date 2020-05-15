@@ -2451,8 +2451,18 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		}
 
 		// create the vanilla http request
-		gzipper := mygzip.NewCompressReader(in)
-		httpReq, err := http.NewRequest("PUT", url, &gzipper)
+		var httpReq *http.Request
+		if fs.Config.UseGzip {
+			gzipper := mygzip.NewCompressReader(in)
+			buf := bytes.NewBuffer(make([]byte, 0, size))
+			fs.Logf(o, "initialized with Len %d, Cap %d", buf.Len(), buf.Cap())
+			io.Copy(buf, &gzipper)
+			fs.Logf(o, "oldsize %d; newsize %d", size, buf.Len())
+			size = int64(buf.Len())
+			httpReq, err = http.NewRequest("PUT", url, buf)
+		} else {
+			httpReq, err = http.NewRequest("PUT", url, in)
+		}
 		if err != nil {
 			return errors.Wrap(err, "s3 upload: new request")
 		}
@@ -2460,8 +2470,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 		// set the headers we signed and the length
 		httpReq.Header = headers
-		httpReq.ContentLength = 78
-		// httpReq.ContentLength = size
+		httpReq.ContentLength = size
 
 		for _, option := range options {
 			switch option.(type) {
@@ -2474,8 +2483,6 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 				}
 			}
 		}
-		httpReq.Header.Set("Content-Encoding", "gzip")
-		fs.Logf(o, "Headers are %v", httpReq.Header)
 
 		err = o.fs.pacer.CallNoRetry(func() (bool, error) {
 			resp, err := o.fs.srv.Do(httpReq)

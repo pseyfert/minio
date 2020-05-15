@@ -118,6 +118,7 @@ func AddFlags(flagSet *pflag.FlagSet) {
 	flags.StringArrayVarP(flagSet, &uploadHeaders, "header-upload", "", nil, "Set HTTP header for upload transactions")
 	flags.StringArrayVarP(flagSet, &downloadHeaders, "header-download", "", nil, "Set HTTP header for download transactions")
 	flags.StringArrayVarP(flagSet, &headers, "header", "", nil, "Set HTTP header for all transactions")
+	flags.BoolVarP(flagSet, &fs.Config.UseGzip, "use-gzip", "", fs.Config.UseGzip, "Use gzip for uploads (use only with S3).")
 }
 
 // ParseHeaders converts the strings passed in via the header flags into HTTPOptions
@@ -237,6 +238,13 @@ func SetFlags() {
 
 	if len(uploadHeaders) != 0 {
 		fs.Config.UploadHeaders = ParseHeaders(uploadHeaders)
+	}
+	if fs.Config.UseGzip {
+		option := &fs.HTTPOption{
+			Key:   "Content-Encoding",
+			Value: "gzip",
+		}
+		fs.Config.UploadHeaders = append(fs.Config.UploadHeaders, option)
 	}
 	if len(downloadHeaders) != 0 {
 		fs.Config.DownloadHeaders = ParseHeaders(downloadHeaders)

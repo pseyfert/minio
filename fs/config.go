@@ -111,6 +111,7 @@ type ConfigInfo struct {
 	MultiThreadStreams     int
 	MultiThreadSet         bool   // whether MultiThreadStreams was set (set in fs/config/configflags)
 	OrderBy                string // instructions on how to order the transfer
+	UseGzip                bool
 	UploadHeaders          []*HTTPOption
 	DownloadHeaders        []*HTTPOption
 	Headers                []*HTTPOption
